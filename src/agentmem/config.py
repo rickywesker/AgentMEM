@@ -45,8 +45,15 @@ EMBED_DIM = int(os.environ.get("EMBED_DIM", "1024"))
 # fuses before trimming. Both swept against the offline harness; see
 # runs/sweep-*.json. POOL_N must exceed RETURN_N or it silently becomes the
 # real return limit.
-RETURN_N = int(os.environ.get("AGENTMEM_RETURN_N", "20"))
-POOL_N = int(os.environ.get("AGENTMEM_POOL_N", "60"))
+# These defaults are the measured-best configuration, not placeholders. The
+# deployed image ships without a .env, so whatever is written here is what runs
+# when an operator sets only the credentials. The earlier defaults of 20/60
+# scored 52.7 against 63.4 — an eleven-point regression that shows up nowhere
+# except the final score.
+RETURN_N = int(os.environ.get("AGENTMEM_RETURN_N", "100"))
+# Must stay above RETURN_N, or the recall pool silently becomes the return
+# limit and the extra slots go unused.
+POOL_N = int(os.environ.get("AGENTMEM_POOL_N", "140"))
 
 # Upper bound on the characters Search hands back, applied on top of RETURN_N.
 #

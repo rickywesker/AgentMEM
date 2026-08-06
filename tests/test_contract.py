@@ -7,13 +7,14 @@ the competition rules make non-negotiable.
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from datetime import UTC, datetime
 
 import numpy as np
 import pytest
 
-from agentmem import ingest, retrieve
+from agentmem import config, ingest, retrieve
 from agentmem.schemas import AddRequest, AddResponse, Memory, SearchRequest, SearchResponse
 from agentmem.store import Record, memory_id
 
@@ -293,6 +294,27 @@ class TestRetrieval:
         pool = retrieve.candidates(records, "dog story", None)
         scores = [s.score for s in pool]
         assert scores == sorted(scores, reverse=True)
+
+
+class TestShippedDefaults:
+    """The image ships without a .env, so module defaults are what runs in
+    production when an operator sets only credentials. Drift here is invisible
+    — it shows up as a lower score and nothing else."""
+
+    def test_return_and_pool_are_the_measured_configuration(self):
+        assert config.RETURN_N == 100
+        assert config.POOL_N == 140
+
+    def test_pool_exceeds_return_or_the_extra_slots_do_nothing(self):
+        assert config.POOL_N > config.RETURN_N
+
+    def test_char_budget_is_a_no_op_on_short_record_datasets(self):
+        # LoCoMo's hundred records total ~17k characters.
+        assert config.CHAR_BUDGET == 0 or config.CHAR_BUDGET > 20_000
+
+    def test_extraction_is_off_by_default(self):
+        # It measured level with not extracting, at 3-6x the ingest time.
+        assert not config.MODELS.extract.base_url or os.environ.get("EXTRACT_API_BASE")
 
 
 class TestIsolation:
