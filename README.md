@@ -13,18 +13,24 @@ order**. Everything below follows from that.
 
 ```
 POST /add     chunk of ≤20 turns
-                └─ message rows   one per turn, verbatim, date-stamped
-              embedded, written synchronously to Postgres
+                ├─ turn rows    one per turn, verbatim, date-stamped
+                └─ fact rows    extracted sentences, each pointing back at
+                                the turn it came from
+              both embedded, written synchronously to Postgres
 
-POST /search  load every record for this user_id  (~600 rows)
-                ├─ BM25          over the user's corpus
-                └─ cosine        brute force, no ANN index
-              fused with RRF → deduplicated → top 100
+POST /search  load every record for this user_id
+                ├─ BM25         over the user's corpus
+                ├─ cosine       brute force, no ANN index
+                └─ created_at   only when the question names a time
+              fused with RRF
+                → facts resolve to their source turn
+                → deduplicated → top 100, capped at 50k characters
 ```
 
-An optional LLM fact-extraction layer exists (`extract.py`) and is **disabled
-by default** because it measured worse than leaving it off — see below. Set
-`EXTRACT_API_BASE` to re-enable it.
+**Facts are keys, never values.** A fact that ranks hands its slot to the turn
+it was extracted from, so the answer model only ever reads verbatim
+conversation. This is the difference between extraction helping and hurting —
+see below.
 
 **No vector index.** `user_id` scopes retrieval to a single conversation, so a
 user's whole corpus is a few hundred rows. One indexed lookup pulls the set and
@@ -59,9 +65,9 @@ of a few hundred short records, returning 100 is not noisy, it is thorough.
 |---|---|---|---|---|---|---|---|
 | score | 41.3 | 48.7 | 49.3 | 52.7 | 54.0 | 57.3 | **60.7** |
 
-**LLM fact extraction is net negative, and is off by default.** This was the
-system's largest component and it did not survive measurement. Extracting
-self-contained sentences at ingest and returning them alongside the raw turns
+**Returning extracted facts as memories is net negative.** This is the wiring
+the system shipped with first, and it did not survive measurement. Extracting
+self-contained sentences at ingest and returning them *alongside* the raw turns
 loses two points overall against not extracting at all:
 
 | category | no extraction | facts indexed, not returned | facts in 75% of slots | n |
@@ -88,6 +94,11 @@ single-hop. That was wrong on two counts — the baseline it was compared agains
 had no embeddings, and at n=150 a single category holds ~64 questions, where
 one standard error is about 6 points. The finding did not survive a larger
 sample against a matched baseline.
+
+The displacement diagnosis is what eventually fixed extraction rather than
+killing it. If facts lose by taking slots, stop giving them slots — index them
+and return their sources instead. That is the shipped design, and the
+before/after is further down.
 
 **Dense retrieval and fact extraction are substitutes, and the system needs one
 of them.** Measured next to extraction, embeddings looked worthless — 60.7
@@ -128,10 +139,35 @@ For scale, an empty index scores **10.4** on the same 500 questions. That is
 what the answer model produces with no memory at all, and it is the floor
 everything above is measured against.
 
-**Every extractor was tried, not just a cheap one.** The first version of this
-finding used `gpt-4o-mini` and concluded extraction does not work. That was too
-broad — extraction quality tracks model strength, and the gap closes almost
-entirely at the top:
+**Extraction was wired wrong, not wrong in principle.** Facts and turns shared
+one candidate pool and competed for the same hundred return slots, so every
+fact that won displaced a dated verbatim turn. Using facts as *keys* — indexed
+and matched against, but resolving to their source turn on the way out — keeps
+the matching benefit and spends no return slot on derived text:
+
+| wiring (same extractor, same facts) | LoCoMo n=500 |
+|---|---|
+| no extraction | 64.0 |
+| facts returned as memories | 60.2 |
+| **facts as keys, turns returned** | **64.4** |
+
+Against no extraction the net is small: +0.4 on LoCoMo and +2.7 on LongMemEval
+(n=150), pooling to **+0.9 over 650 questions** — inside the noise floor. It
+ships on anyway, for two reasons that are about risk rather than the mean. It
+is never negative overall on either dataset, and its largest single-category
+effect is single-session-preference at +16, which is the entire shape of
+PersonaMem — one of the five leaderboard datasets and one we cannot measure.
+Set `EXTRACT_API_BASE` empty to turn it off; that is the configuration the
+64.0 above was measured on.
+
+The honest counterweight: knowledge-update fell 12 points at n=150, extraction
+triples ingest time, and neither the gain nor the loss clears one standard
+error.
+
+**Every extractor was tried, not just a cheap one.** An earlier version of this
+finding used `gpt-4o-mini` and concluded extraction does not work at all. That
+was too broad twice over — the wiring was wrong, *and* extraction quality
+tracks model strength:
 
 | extractor | LoCoMo n=500 | ingest wall time |
 |---|---|---|
@@ -142,11 +178,11 @@ entirely at the top:
 | deepseek-chat | 61.8 | 263s |
 | gpt-4o-mini | 60.2 | ~200s |
 
-The right conclusion is narrower than the first one: a *weak* extractor is
-clearly negative, and a strong one is indistinguishable from not extracting —
-at three to six times the ingest time and, for the frontier models, a bill in
-the thousands on the full corpus. It stays off because it costs a lot to break
-even, not because the idea is worthless.
+Those numbers are all from the *wrong wiring*, with facts occupying return
+slots. They are kept here because they show the gradient is real: a weak
+extractor is clearly worse than a strong one either way. `gpt-4o-mini` is what
+ships, since the academic board requires it and the structural fix matters more
+than the model.
 
 ### How much of this is real
 
