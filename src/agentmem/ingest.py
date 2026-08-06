@@ -41,6 +41,8 @@ def render(content: str, when: datetime | None) -> str:
 
 
 # Year, or a month name — enough to tell whether a sentence already dates itself.
+_TOKEN = re.compile(r"[a-z0-9']+")
+
 _HAS_DATE = re.compile(
     r"\b(19|20)\d{2}\b|\b(?:January|February|March|April|May|June|July|August|September"
     r"|October|November|December)\b",
@@ -91,9 +93,41 @@ def message_rows(request: AddRequest) -> list[tuple]:
                 when,
                 ordinal,
                 None,  # embedding backfilled by the embed pass
+                None,  # turns have no source; facts point back at them
             )
         )
     return rows
+
+
+def _overlap(fact_tokens: set[str], turn_tokens: set[str]) -> float:
+    if not fact_tokens or not turn_tokens:
+        return 0.0
+    return len(fact_tokens & turn_tokens) / len(fact_tokens)
+
+
+def attribute(facts: list[str], turn_rows: list[tuple], floor: float = 0.34) -> list[str | None]:
+    """Point each fact at the turn it most likely came from.
+
+    Extraction runs over a whole chunk, so the model's output does not say
+    which turn produced which fact. Asking it to emit line numbers would be
+    more direct and less reliable — models miscount, and a wrong index is
+    worse than no index.
+
+    Token overlap is enough here because facts are near-quotes of their
+    source. Below ``floor`` the fact is left unattributed and will be returned
+    on its own rather than resolving to an unrelated turn.
+    """
+    turn_tokens = [(row[0], set(_TOKEN.findall(row[5].lower()))) for row in turn_rows]
+    attributed: list[str | None] = []
+    for fact in facts:
+        tokens = set(_TOKEN.findall(fact.lower()))
+        best_id, best_score = None, floor
+        for identifier, candidate in turn_tokens:
+            score = _overlap(tokens, candidate)
+            if score > best_score:
+                best_id, best_score = identifier, score
+        attributed.append(best_id)
+    return attributed
 
 
 def fact_rows(
@@ -102,6 +136,7 @@ def fact_rows(
     when: datetime | None,
     *,
     offset: int = 0,
+    sources: list[str | None] | None = None,
 ) -> list[tuple]:
     """Rows for extracted facts, sharing the chunk's anchor date."""
     rows: list[tuple] = []
@@ -123,6 +158,7 @@ def fact_rows(
                 when,
                 ordinal,
                 None,
+                sources[position] if sources and position < len(sources) else None,
             )
         )
     return rows
@@ -139,7 +175,10 @@ def with_embeddings(rows: list[tuple], vectors: list[list[float]]) -> list[tuple
     """Attach embeddings positionally to already-built rows."""
     if len(vectors) != len(rows):
         raise ValueError(f"expected {len(rows)} vectors, got {len(vectors)}")
-    return [row[:-1] + (pack(vector),) for row, vector in zip(rows, vectors, strict=True)]
+    return [
+        row[:-2] + (pack(vector), row[-1])
+        for row, vector in zip(rows, vectors, strict=True)
+    ]
 
 
 def as_search_payload(record: Record) -> dict:

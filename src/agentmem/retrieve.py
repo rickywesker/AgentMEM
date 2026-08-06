@@ -261,6 +261,37 @@ def candidates(
     ]
 
 
+def resolve_sources(scored: list[Scored], by_id: dict[str, Record]) -> list[Scored]:
+    """Swap a ranked fact for the turn it was derived from.
+
+    A fact earns its place in the index, not in the answer prompt. Extracted
+    sentences are dense and easy to match against, which is exactly what
+    retrieval wants; they are also polished enough to read like conclusions,
+    which is what makes the answer model confabulate on questions the
+    conversation never answers.
+
+    The first attempt put facts and turns in one pool competing for the same
+    hundred slots, and every fact that won displaced a dated verbatim turn —
+    temporal fell 17 points and adversarial 26. Using facts as keys and
+    returning their sources keeps the matching benefit without spending a
+    single return slot on derived text.
+
+    Two facts from one turn collapse to that turn once, at the better rank.
+    Unattributed facts are returned as themselves rather than dropped.
+    """
+    resolved: list[Scored] = []
+    seen: set[str] = set()
+    for item in scored:
+        record = item.record
+        if record.kind == "fact" and record.source_id:
+            record = by_id.get(record.source_id, record)
+        if record.id in seen:
+            continue
+        seen.add(record.id)
+        resolved.append(Scored(record=record, score=item.score))
+    return resolved
+
+
 def _dedup(items: list[Scored], seen: set[str]) -> list[Scored]:
     kept: list[Scored] = []
     for item in items:

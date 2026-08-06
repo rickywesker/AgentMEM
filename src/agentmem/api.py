@@ -102,12 +102,14 @@ async def add(request: AddRequest) -> AddResponse:
     anchor = ingest.chunk_anchor(request)
     rows = ingest.message_rows(request)
 
-    # Facts are the precision layer; raw turns underneath are the recall floor.
-    # Extraction failing degrades the former and leaves the latter intact.
+    # Facts index the turns; they are never returned in place of them. An
+    # extraction failure costs matching quality and nothing else, which is why
+    # it is allowed to fail — the platform does not retry a write it accepted.
     async with state["llm_slots"]:
         facts = await extract.extract(state["http"], request, anchor)
     if facts:
-        rows += ingest.fact_rows(request, facts, anchor, offset=len(rows))
+        sources = ingest.attribute(facts, rows)
+        rows += ingest.fact_rows(request, facts, anchor, offset=len(rows), sources=sources)
 
     if rows:
         vectors = await embed_texts([row[5] for row in rows])
@@ -138,6 +140,9 @@ async def search(request: SearchRequest) -> SearchResponse:
     pool = retrieve.candidates(
         records, request.query, query_vector, options=request.options
     )
+    # Facts are index entries, not answers: a fact that ranks hands its slot
+    # to the turn it came from.
+    pool = retrieve.resolve_sources(pool, {record.id: record for record in records})
     limit = min(retrieve.DEFAULT_RETURN, request.top_k)
     selected = retrieve.trim(pool, limit=limit)
 

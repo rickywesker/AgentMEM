@@ -124,7 +124,13 @@ class TestTimeRendering:
         assert anchor == ingest.to_datetime(1683525360000)
 
 
-def record(identifier: str, content: str, kind: str = "message", ordinal: int = 0) -> Record:
+def record(
+    identifier: str,
+    content: str,
+    kind: str = "message",
+    ordinal: int = 0,
+    source_id: str | None = None,
+) -> Record:
     return Record(
         id=identifier,
         content=content,
@@ -132,7 +138,83 @@ def record(identifier: str, content: str, kind: str = "message", ordinal: int = 
         created_at=datetime(2023, 5, 8, tzinfo=UTC),
         ordinal=ordinal,
         embedding=None,
+        source_id=source_id,
     )
+
+
+class TestFactsAsKeys:
+    """A fact earns a place in the index, never a return slot."""
+
+    def test_a_ranked_fact_returns_its_source_turn(self):
+        turn = record("m1", "[08 May 2023] Caroline: I adopted a dog named Biscuit.")
+        fact = record("f1", "Caroline adopted a dog.", kind="fact", source_id="m1")
+        resolved = retrieve.resolve_sources(
+            [retrieve.Scored(record=fact, score=0.9)], {"m1": turn}
+        )
+        assert [r.record.id for r in resolved] == ["m1"]
+        assert resolved[0].record.kind == "message"
+        assert resolved[0].score == 0.9
+
+    def test_two_facts_from_one_turn_collapse_to_one_slot(self):
+        turn = record("m1", "the source turn")
+        facts = [
+            retrieve.Scored(record=record("f1", "fact one", "fact", source_id="m1"), score=0.9),
+            retrieve.Scored(record=record("f2", "fact two", "fact", source_id="m1"), score=0.8),
+        ]
+        resolved = retrieve.resolve_sources(facts, {"m1": turn})
+        assert len(resolved) == 1
+        assert resolved[0].score == 0.9  # keeps the better rank
+
+    def test_a_fact_and_its_source_do_not_both_occupy_slots(self):
+        turn = record("m1", "the source turn")
+        pool = [
+            retrieve.Scored(record=record("f1", "derived", "fact", source_id="m1"), score=0.9),
+            retrieve.Scored(record=turn, score=0.7),
+        ]
+        assert len(retrieve.resolve_sources(pool, {"m1": turn})) == 1
+
+    def test_unattributed_fact_is_returned_rather_than_dropped(self):
+        fact = record("f1", "a fact with no traceable source", kind="fact")
+        resolved = retrieve.resolve_sources([retrieve.Scored(record=fact, score=0.5)], {})
+        assert [r.record.id for r in resolved] == ["f1"]
+
+    def test_dangling_source_reference_falls_back_to_the_fact(self):
+        fact = record("f1", "orphaned", kind="fact", source_id="gone")
+        resolved = retrieve.resolve_sources([retrieve.Scored(record=fact, score=0.5)], {})
+        assert [r.record.id for r in resolved] == ["f1"]
+
+    def test_relevance_order_is_preserved(self):
+        turns = {f"m{i}": record(f"m{i}", f"turn {i}") for i in range(3)}
+        pool = [
+            retrieve.Scored(
+                record=record(f"f{i}", f"fact {i}", "fact", source_id=f"m{i}"), score=1 - i / 10
+            )
+            for i in range(3)
+        ]
+        assert [r.record.id for r in retrieve.resolve_sources(pool, turns)] == ["m0", "m1", "m2"]
+
+    def test_attribution_matches_a_fact_to_its_turn(self):
+        request = make_request(
+            messages=[
+                {"role": "user", "content": "Caroline: I adopted a dog named Biscuit."},
+                {"role": "user", "content": "Melanie: I signed up for a pottery class."},
+            ]
+        )
+        rows = ingest.message_rows(request)
+        sources = ingest.attribute(
+            ["Melanie signed up for a pottery class.", "Caroline adopted a dog named Biscuit."],
+            rows,
+        )
+        assert sources == [rows[1][0], rows[0][0]]
+
+    def test_attribution_refuses_a_weak_match(self):
+        request = make_request(
+            messages=[{"role": "user", "content": "Caroline: I adopted a dog."}]
+        )
+        rows = ingest.message_rows(request)
+        assert ingest.attribute(["Quantum chromodynamics governs the strong force."], rows) == [
+            None
+        ]
 
 
 class TestRetrieval:

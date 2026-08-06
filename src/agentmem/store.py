@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS memories (
     ordinal     INTEGER NOT NULL,
     embedding   BYTEA
 );
+-- Facts point at the turn they were derived from. A fact is an index entry,
+-- not something we hand to the answer model, so a fact that ranks resolves to
+-- its source turn on the way out.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_id TEXT;
 CREATE INDEX IF NOT EXISTS memories_user_idx ON memories (user_id);
 -- request_id is the platform's idempotency key: a retried Add must not
 -- duplicate rows.
@@ -47,6 +51,8 @@ class Record:
     created_at: datetime | None
     ordinal: int
     embedding: np.ndarray | None
+    # Set on facts only: the id of the turn the fact was derived from.
+    source_id: str | None = None
 
 
 def memory_id(request_id: str, kind: str, ordinal: int) -> str:
@@ -91,7 +97,7 @@ class Store:
         """Insert memory rows. Idempotent on (request_id, kind, ordinal).
 
         Rows are (id, user_id, session_id, request_id, kind, content,
-        created_at, ordinal, embedding).
+        created_at, ordinal, embedding, source_id).
         """
         if not rows:
             return 0
@@ -100,8 +106,8 @@ class Store:
                 """
                 INSERT INTO memories
                     (id, user_id, session_id, request_id, kind, content,
-                     created_at, ordinal, embedding)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                     created_at, ordinal, embedding, source_id)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 ON CONFLICT (request_id, kind, ordinal) DO NOTHING
                 """,
                 rows,
@@ -118,7 +124,7 @@ class Store:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, content, kind, created_at, ordinal, embedding
+                SELECT id, content, kind, created_at, ordinal, embedding, source_id
                 FROM memories WHERE user_id = $1 ORDER BY ordinal
                 """,
                 user_id,
@@ -131,6 +137,7 @@ class Store:
                 created_at=row["created_at"],
                 ordinal=row["ordinal"],
                 embedding=unpack(row["embedding"]),
+                source_id=row["source_id"],
             )
             for row in rows
         ]
