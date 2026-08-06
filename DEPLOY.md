@@ -27,16 +27,41 @@ The form needs:
 ## 1. Host
 
 Requirements are unglamorous: reachable from the platform's network for 72
-hours, and stable under sustained concurrency.
+hours, and stable under sustained concurrency. Sizing is small — 2 vCPU / 4 GB.
+Retrieval is brute-force numpy over a few hundred vectors per query.
 
-The evaluator resolves to `47.112.15.137`, an Alibaba Cloud Shenzhen address.
-Round-trip latency is charged 47,000 times over the ingest, and a dropped
-connection mid-run costs a retry the platform may not repeat. Hosting near it —
-Alibaba Cloud Shenzhen or Hong Kong — is the low-risk choice. Anywhere with a
-stable route works; a laptop on a home connection does not.
+The one thing that actually matters is the network path. The evaluator resolves
+to `47.112.15.137`, an Alibaba Cloud Shenzhen address inside mainland China,
+and it will make roughly 47,000 Add calls at 64-way concurrency. Cross-border
+traffic out of the mainland goes through congested international gateways, so
+the closer the host sits to Shenzhen the less there is to go wrong.
 
-Sizing: 2 vCPU / 4 GB is enough. Retrieval is brute-force numpy over a few
-hundred vectors per query, and the corpus is a few GB of text.
+### Railway
+
+Workable. The caveats are about the route, not the platform:
+
+- **Pick `asia-southeast1` (Singapore).** It is the only Railway region with a
+  tolerable path to mainland China; US and EU regions add hundreds of
+  milliseconds per call and far more variance.
+- **The smoke run is the network test.** It originates from the platform's own
+  infrastructure, so it measures the exact path that matters. One per hour is
+  enough to find out cheaply, and a pass settles the question.
+- **Do not let the service sleep.** Usage-based sleeping mid-run turns into
+  failed Adds. `railway.json` pins one replica with restart-on-failure.
+
+Setup: attach the Postgres plugin (it injects `DATABASE_URL`), set the rest of
+`.env` as service variables, and deploy from the Dockerfile. `railway.json`
+already configures the health check and restart policy, and the image binds
+`$PORT` rather than a fixed port.
+
+### Alternative if smoke fails on latency
+
+Alibaba Cloud Shenzhen or Hong Kong, same Docker image, no code changes. Hong
+Kong needs no ICP filing and keeps a short path to the evaluator. Worth having
+an account ready before submitting, so a failed smoke costs an hour rather than
+a day.
+
+Wherever it runs, a laptop on a home connection does not qualify.
 
 ## 2. Bring it up
 
