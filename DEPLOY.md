@@ -105,6 +105,26 @@ Then confirm TLS and auth from outside the host:
 curl -s -m 10 https://<host>/health
 ```
 
+## 3.5 Never deploy while an evaluation is running
+
+A deploy restarts the container. Anything the platform has in flight dies with
+it, and the failure it reports is `ADD_API_CONTRACT_MISMATCH` — "记忆写入未完成"
+— which reads like a contract bug in our code and is not one.
+
+This has already cost one smoke attempt. The service had answered 281 Adds
+with 200 and zero errors; the log ends with a successful Add followed
+immediately by `Stopping Container`.
+
+Before `railway up`, confirm nothing is running:
+
+```bash
+railway logs --service agentmem --lines 50 | grep -c "POST /add"
+```
+
+Recent Add traffic that is not yours means an evaluation is live. Wait for it.
+Smoke is one attempt per hour and full is one per three months, so a deploy
+that saves five minutes can cost an hour or a quarter.
+
 ## 4. Smoke, then full
 
 Smoke is one per hour. Treat each attempt as expensive and read the whole
