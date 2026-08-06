@@ -89,11 +89,27 @@ had no embeddings, and at n=150 a single category holds ~64 questions, where
 one standard error is about 6 points. The finding did not survive a larger
 sample against a matched baseline.
 
-**Dense retrieval added nothing measurable either** (60.7 vs 61.3, inside the
-noise band). At 100 returned records out of roughly 800, BM25 already reaches
-the recall that matters. It stays wired up because the cost is negligible and
-the private evaluation corpus may have less lexical overlap than LoCoMo, but it
-is not carrying the system.
+**Dense retrieval and fact extraction are substitutes, and the system needs one
+of them.** Measured next to extraction, embeddings looked worthless — 60.7
+against 61.3, inside the noise. Measured with extraction off, they are worth
+seven points:
+
+| configuration | LoCoMo n=500 |
+|---|---|
+| embeddings, no extraction | **62.2–63.4** |
+| BM25 + gpt-4o-mini extraction, no embeddings | 57.8 |
+| BM25 alone | 55.6 |
+
+Both do the same job — bridging the gap between the words in a question and the
+words the conversation actually used — so whichever is added second finds
+little left to contribute. The trap is reading the first comparison alone,
+concluding embeddings are optional, and shipping plain BM25 seven points down.
+
+This also decides the fallback if the academic board's "Add/Search must use
+gpt-4o-mini" rule turns out to cover embedding models: not plain BM25, but
+BM25 plus gpt-4o-mini extraction, which recovers 2.2 of the lost points using
+only the mandated model. Switching between the two is environment variables,
+not code.
 
 What is left is deliberately plain: index every turn verbatim with its date,
 retrieve with BM25 and cosine, return the top hundred. Each thing that was
