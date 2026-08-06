@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: agentmem
+      POSTGRES_PASSWORD: agentmem
+      POSTGRES_DB: agentmem
+    ports:
+      - "5432:5432"
+    # The platform writes with 64 concurrent workers; the alpine default of
+    # 100 connections leaves no headroom for the pool plus psql.
+    command: >
+      postgres -c max_connections=200
+               -c shared_buffers=512MB
+               -c synchronous_commit=off
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentmem"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

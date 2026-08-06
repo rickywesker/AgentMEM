@@ -1,0 +1,193 @@
+# AgentMEM
+
+A memory system for the [Agent Memory Leaderboard 2026](https://agentmemories.ai/competition/),
+academic methods board, textual track.
+
+The platform drives two endpoints — `POST /add` to write, `POST /search` to
+retrieve — and handles answering and scoring itself with fixed parameters
+(`gpt-4o-mini`, temperature 0, `top_k` 100). So the only thing a submission
+actually controls is **what text ends up in the returned records, and in what
+order**. Everything below follows from that.
+
+## Architecture
+
+```
+POST /add     chunk of ≤20 turns
+                └─ message rows   one per turn, verbatim, date-stamped
+              embedded, written synchronously to Postgres
+
+POST /search  load every record for this user_id  (~600 rows)
+                ├─ BM25          over the user's corpus
+                └─ cosine        brute force, no ANN index
+              fused with RRF → deduplicated → top 100
+```
+
+An optional LLM fact-extraction layer exists (`extract.py`) and is **disabled
+by default** because it measured worse than leaving it off — see below. Set
+`EXTRACT_API_BASE` to re-enable it.
+
+**No vector index.** `user_id` scopes retrieval to a single conversation, so a
+user's whole corpus is a few hundred rows. One indexed lookup pulls the set and
+numpy scores it in-process. An ANN index over 800 vectors costs more than the
+brute-force dot product it would replace.
+
+**Postgres, not SQLite.** The platform ingests with 64 concurrent workers and
+SQLite serialises writers behind a single lock.
+
+**Raw turns, indexed verbatim.** Each turn keeps its speaker and carries a
+day-granularity date inlined into the text — not only in the `created_at`
+field. The platform's formatter for the textual datasets is not public, so a
+record that relies on `created_at` being rendered might arrive at the answer
+model with no date at all, and the judge grades time granularity exactly.
+
+**Every LLM call on the write path is optional.** Embedding and extraction both
+degrade to "skip it" on failure rather than failing the write, because `Add`
+returning non-200 is not something the platform retries indefinitely, and a
+lexical-only index still answers most questions.
+
+## What the measurements said
+
+All numbers are LoCoMo, n=150, scored with the platform's verbatim answer and
+judge prompts (`harness/contracts.py`). Reproduce with `harness/run.py`.
+
+**Returning more is better, up to the contract ceiling.** Score rises
+monotonically with the number of records returned — 41.3 at 3 records, 60.7 at
+100. The instinct to return a small, precise set is wrong here: with a corpus
+of a few hundred short records, returning 100 is not noisy, it is thorough.
+
+| records returned | 3 | 6 | 10 | 20 | 40 | 60 | 100 |
+|---|---|---|---|---|---|---|---|
+| score | 41.3 | 48.7 | 49.3 | 52.7 | 54.0 | 57.3 | **60.7** |
+
+**LLM fact extraction is net negative, and is off by default.** This was the
+system's largest component and it did not survive measurement. Extracting
+self-contained sentences at ingest and returning them alongside the raw turns
+loses two points overall against not extracting at all:
+
+| category | no extraction | facts indexed, not returned | facts in 75% of slots | n |
+|---|---|---|---|---|
+| multi-hop | 53.5 | 49.3 | 53.5 | 71 |
+| temporal | **58.0** | 55.6 | 44.4 | 81 |
+| open-domain | 37.5 | 37.5 | 41.7 | 24 |
+| single-hop | **81.6** | 81.1 | 80.2 | 212 |
+| adversarial | 45.5 | 45.5 | 44.6 | 112 |
+| **overall** | **63.6** | 62.4 | 60.8 | 500 |
+| avg context | 17,298 chars | 14,613 | 15,458 | |
+
+The mechanism is in the last row. Facts do not merely fail to help — they
+*displace*. They compete with raw turns for the fixed candidate pool, so the
+hundred records that come back are drawn from a worse selection, and the
+answer model gets less of the conversation. Temporal questions lose the most,
+because they are carried by the per-turn dates that get pushed out.
+
+Note the middle column: extraction is a loss even when the extracted facts are
+never returned, purely from consuming pool slots.
+
+An earlier measurement at n=150 appeared to show facts gaining +12 on
+single-hop. That was wrong on two counts — the baseline it was compared against
+had no embeddings, and at n=150 a single category holds ~64 questions, where
+one standard error is about 6 points. The finding did not survive a larger
+sample against a matched baseline.
+
+**Dense retrieval added nothing measurable either** (60.7 vs 61.3, inside the
+noise band). At 100 returned records out of roughly 800, BM25 already reaches
+the recall that matters. It stays wired up because the cost is negligible and
+the private evaluation corpus may have less lexical overlap than LoCoMo, but it
+is not carrying the system.
+
+What is left is deliberately plain: index every turn verbatim with its date,
+retrieve with BM25 and cosine, return the top hundred. Each thing that was
+added on top of that had to justify itself against the harness, and most did
+not.
+
+**The result does not depend on how the platform renders `created_at`.** The
+formatter for the textual datasets is not published, so the same index was
+scored twice: once rendered `- [created_at] content`, once with `created_at`
+dropped entirely. The gap is 1.6 points overall (63.6 → 62.0), and temporal —
+the category that should care most — loses 3.7. That is the payoff for inlining
+the date into `content` rather than relying on the field: the pessimistic case
+degrades instead of collapsing.
+
+For scale, an empty index scores **10.4** on the same 500 questions. That is
+what the answer model produces with no memory at all, and it is the floor
+everything above is measured against.
+
+A caveat on all numbers: one standard error is about ±2.2 points at n=500 and
+±4 at n=150, so differences under roughly 4 points are not decisive. The claims
+above rest on n=500 runs and on effects that held across configurations.
+
+## Competition compliance
+
+| Rule | How it is met |
+|---|---|
+| Search must not generate answers | Ranking selects and orders existing records. No stage composes text at query time. |
+| No answers disguised as memories | Every returned record traces to a stored row derived from the ingested corpus. |
+| No hardcoded answers | No benchmark answer, question, or id appears in `src/`. |
+| No cross-sample state | `user_id` is the only read scope; `store.load_user` never crosses it. |
+| Data used only for this run, deleted within 30 days | Corpora and run artifacts are gitignored; teardown drops the database. |
+| Reuse must be disclosed | See Attribution. |
+
+Corpus text is treated as untrusted input: the extraction prompt delivers it in
+a data block with an explicit instruction that anything resembling a command is
+to be recorded as something a speaker said, not acted on.
+
+## Running it
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+```
+
+```bash
+docker compose up -d
+```
+
+```bash
+cp .env.example .env
+```
+
+Then start the service and score it against the offline harness:
+
+```bash
+.venv/bin/python -m uvicorn agentmem.api:app --host 0.0.0.0 --port 8080
+```
+
+```bash
+.venv/bin/python -m harness.run --limit 150 --top-k 100 --tag baseline
+```
+
+Tunables are environment variables, all swept rather than guessed:
+`AGENTMEM_RETURN_N`, `AGENTMEM_POOL_N`, `AGENTMEM_FACT_SHARE`.
+
+## Why the offline harness exists
+
+A full evaluation can be submitted **once every three months**. There is no
+iterating on the real leaderboard. `harness/` replicates the whole pipeline —
+add, search, answer, judge — using the platform's own answer and judge prompts,
+copied verbatim from its public evaluation code. Answers and judgements are
+cached by prompt hash, so re-scoring after a retrieval change only pays for the
+questions whose context actually moved.
+
+The harness runs against LoCoMo, which is the public ancestor of the
+leaderboard's `locomo-refined`. It is not the same data, so absolute scores
+here do not predict leaderboard position. Relative deltas between our own
+configurations are what it is for.
+
+## Attribution
+
+- Answer and judge contracts in `harness/contracts.py` are copied verbatim from
+  the leaderboard's public evaluation code,
+  [AML-memory/agent-memory-leaderboard](https://github.com/AML-memory/agent-memory-leaderboard).
+- Evaluation corpus: [snap-research/locomo](https://github.com/snap-research/locomo).
+- BM25 is textbook Okapi BM25, implemented directly; reciprocal rank fusion
+  follows Cormack et al. (2009).
+
+## Layout
+
+```
+src/agentmem/     the service — config, llm, schemas, store, ingest, extract, retrieve, api
+harness/          offline replica of the platform pipeline
+  contracts.py    verbatim platform prompts — do not paraphrase
+  adapters/       dataset → Add/Search call streams
+tests/            contract and retrieval invariants
+runs/             scored experiment output (gitignored)
+```

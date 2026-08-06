@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Benchmark corpora and run artifacts — never committed.
+# Competition rule: evaluation data is used only for the current run and
+# deleted within 30 days.
+data/
+runs/
+harness/datasets/
+harness/.cache/
+*.jsonl
+
+# Editor and tooling artifacts
+.impeccable/
+.DS_Store
+.idea/
+.vscode/
