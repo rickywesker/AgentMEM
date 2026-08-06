@@ -112,9 +112,45 @@ For scale, an empty index scores **10.4** on the same 500 questions. That is
 what the answer model produces with no memory at all, and it is the floor
 everything above is measured against.
 
-A caveat on all numbers: one standard error is about ±2.2 points at n=500 and
-±4 at n=150, so differences under roughly 4 points are not decisive. The claims
-above rest on n=500 runs and on effects that held across configurations.
+**Every extractor was tried, not just a cheap one.** The first version of this
+finding used `gpt-4o-mini` and concluded extraction does not work. That was too
+broad — extraction quality tracks model strength, and the gap closes almost
+entirely at the top:
+
+| extractor | LoCoMo n=500 | ingest wall time |
+|---|---|---|
+| none | **63.4** | 124s |
+| gpt-5-mini | 63.2 | 736s |
+| claude-opus-4-8 | 62.4 | 453s |
+| gemini-2.5-pro | 62.2 | 763s |
+| deepseek-chat | 61.8 | 263s |
+| gpt-4o-mini | 60.2 | ~200s |
+
+The right conclusion is narrower than the first one: a *weak* extractor is
+clearly negative, and a strong one is indistinguishable from not extracting —
+at three to six times the ingest time and, for the frontier models, a bill in
+the thousands on the full corpus. It stays off because it costs a lot to break
+even, not because the idea is worthless.
+
+### How much of this is real
+
+Running the same configuration three times gave 63.6, 63.4, and 62.2. The
+answer model is at temperature 0 and answers are cached by prompt hash, so that
+spread comes from retrieval nondeterminism producing slightly different
+contexts. **Run-to-run variance is about ±1.4 points**, on top of ±2.2 points of
+sampling error at n=500.
+
+So the honest reading of everything above is:
+
+- **Solid**: return count matters enormously on LoCoMo (41.3 → 60.7); a weak
+  extractor hurts; the empty-index floor is 10.4.
+- **Directional**: strong extractors land level with no extraction; dense
+  retrieval is neutral; long contexts hurt on LongMemEval.
+- **Not established**: any single comparison under about 3 points, including
+  the exact choice of `fact_share` and the precise character budget.
+
+Configurations were chosen to be safe across that uncertainty rather than to
+win a specific number.
 
 ## Competition compliance
 
@@ -171,6 +207,54 @@ The harness runs against LoCoMo, which is the public ancestor of the
 leaderboard's `locomo-refined`. It is not the same data, so absolute scores
 here do not predict leaderboard position. Relative deltas between our own
 configurations are what it is for.
+
+**Coverage is narrower than the leaderboard's.** Of the textual datasets the
+platform evaluates, only some can be replicated locally at all:
+
+| dataset | corpus available | in the harness |
+|---|---|---|
+| LoCoMo | yes | yes |
+| LongMemEval-S | yes | yes |
+| ScriptMem | **no** — the corpus is withheld | no |
+| PersonaMem, BEAM | yes, not yet wired | no |
+
+ScriptMem is not an oversight. Its authors deliberately ship questions and gold
+answers without the source conversations, [for copyright
+reasons](https://github.com/memorax-ai/ScriptMem) — the `conversation` field
+holds a synthetic schema example. There is nothing to write into a memory
+system, so no memory system can be scored against it offline.
+
+### What the second dataset changed
+
+LongMemEval-S was worth wiring up because it shares LoCoMo's answer and judge
+contract exactly while having the opposite shape: each *question* owns a
+haystack of ~54 mostly-irrelevant sessions, and its turns are ShareGPT-length
+rather than chat-length. Scoring 58.3 over 60 questions, ten per type:
+
+| question type | score |
+|---|---|
+| single-session-assistant | 100.0 |
+| single-session-user | 90.0 |
+| knowledge-update | 80.0 |
+| multi-session | 30.0 |
+| single-session-preference | 30.0 |
+| temporal-reasoning | 20.0 |
+
+Two things came out of it. **Memory governance is a strength, not a gap** —
+`knowledge-update` asks whether a later fact correctly supersedes an earlier
+one, and inlined dates plus recency-ordered retrieval handle it at 80. And the
+"return everything" rule tuned on LoCoMo does not transfer: at a hundred
+records LongMemEval's context reaches ~112k characters, and the score is lower
+there than in the middle of the range. That is what motivated budgeting
+characters rather than records — though at n=60 the difference is two
+questions, so the budget is a guard against the failure mode rather than a
+measured win.
+
+Reading the numbers above with that in mind: most tuning here happened on one
+conversational dataset, and the leaderboard averages over several with
+different shapes — multiple-choice, rubric-graded, and preference-graded among
+them. Configurations were preferred when they held up across categories and
+across both datasets rather than when they won overall by a point.
 
 ## Attribution
 

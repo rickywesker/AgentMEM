@@ -32,7 +32,7 @@ from agentmem.config import Gear  # noqa: E402
 from agentmem.llm import chat  # noqa: E402
 
 from . import contracts  # noqa: E402
-from .adapters import locomo  # noqa: E402
+from .adapters import locomo, longmemeval  # noqa: E402
 
 CACHE = Path(__file__).resolve().parent / ".cache"
 
@@ -222,14 +222,15 @@ def stratified_sample(
     return picked[:limit]
 
 
-def report(results: list[Result]) -> dict:
+def report(results: list[Result], labels: dict[int, str] | None = None) -> dict:
+    labels = labels or {}
     correct = sum(r.label == "CORRECT" for r in results)
     overall = 100.0 * correct / len(results) if results else 0.0
     per_category: dict[str, dict] = {}
     for category in sorted({r.category for r in results}):
         group = [r for r in results if r.category == category]
         hits = sum(r.label == "CORRECT" for r in group)
-        per_category[str(category)] = {
+        per_category[labels.get(category, str(category))] = {
             "n": len(group),
             "score": round(100.0 * hits / len(group), 2),
         }
@@ -246,7 +247,9 @@ def report(results: list[Result]) -> dict:
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default="locomo")
+    parser.add_argument("--dataset", default="locomo", choices=["locomo", "longmemeval"])
+    parser.add_argument("--haystacks", type=int, default=0,
+                        help="longmemeval only: cap questions/haystacks ingested (0 = all)")
     parser.add_argument("--data-path", default="harness/datasets/locomo/data/locomo10.json")
     parser.add_argument("--system", default="http://localhost:8080")
     parser.add_argument("--system-key", default=os.environ.get("AGENTMEM_API_KEY", ""))
@@ -266,10 +269,23 @@ async def main() -> None:
     parser.add_argument("--tag", default="run", help="label for the saved report")
     args = parser.parse_args()
 
-    if args.dataset != "locomo":
+    if args.dataset == "locomo":
+        chunks, questions = locomo.load(args.data_path)
+        labels = {
+            1: "multi-hop",
+            2: "temporal",
+            3: "open-domain",
+            4: "single-hop",
+            5: "adversarial",
+        }
+    elif args.dataset == "longmemeval":
+        path = args.data_path
+        if path == parser.get_default("data_path"):
+            path = "harness/datasets/longmemeval/longmemeval_s.json"
+        chunks, questions = longmemeval.load(path, limit=args.haystacks)
+        labels = longmemeval.category_names()
+    else:
         raise SystemExit(f"adapter for {args.dataset!r} not wired yet")
-
-    chunks, questions = locomo.load(args.data_path)
     sampled = stratified_sample(questions, args.limit, args.seed)
     print(
         f"loaded {len(chunks)} chunks, {len(questions)} questions "
@@ -299,7 +315,7 @@ async def main() -> None:
     finally:
         await system.aclose()
 
-    summary = report(list(results))
+    summary = report(list(results), labels)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
     out = Path("runs") / f"{args.tag}.json"

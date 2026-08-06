@@ -48,6 +48,23 @@ EMBED_DIM = int(os.environ.get("EMBED_DIM", "1024"))
 RETURN_N = int(os.environ.get("AGENTMEM_RETURN_N", "20"))
 POOL_N = int(os.environ.get("AGENTMEM_POOL_N", "60"))
 
+# Upper bound on the characters Search hands back, applied on top of RETURN_N.
+#
+# A fixed record count is the wrong unit across datasets. LoCoMo turns average
+# ~147 characters, so a hundred of them is a 15k-character context the answer
+# model handles comfortably. LongMemEval turns are ShareGPT-length, and the
+# same hundred records produce ~112k characters — roughly 28k tokens aimed at
+# gpt-4o-mini. Budgeting characters makes the returned count adapt to how long
+# the records actually are, instead of being tuned to whichever dataset was
+# measured last. 0 disables the budget.
+#
+# 50,000 is a hedge, not a tuned optimum. It is a no-op on LoCoMo, whose
+# hundred records come to ~17k characters, and it clamps LongMemEval to the
+# middle of its curve. The LongMemEval sample is too small to prove a gain;
+# what the budget buys is that no dataset with long records can quietly hand
+# the answer model a 100k-character prompt. 0 disables it.
+CHAR_BUDGET = int(os.environ.get("AGENTMEM_CHAR_BUDGET", "50000"))
+
 # Share of the returned slots reserved for extracted facts; the rest go to raw
 # dated turns. Swept, not guessed — see runs/share-*.json.
 FACT_SHARE = float(os.environ.get("AGENTMEM_FACT_SHARE", "0.5"))

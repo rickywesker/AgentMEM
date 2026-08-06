@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .config import FACT_SHARE, POOL_N, RETURN_N
+from .config import CHAR_BUDGET, FACT_SHARE, POOL_N, RETURN_N
 from .store import Record, embedding_matrix
 
 # Chosen against the harness, not by intuition: see runs/ for the sweep.
@@ -185,12 +185,33 @@ def _dedup(items: list[Scored], seen: set[str]) -> list[Scored]:
     return kept
 
 
+def _apply_char_budget(items: list[Scored], budget: int) -> list[Scored]:
+    """Drop the tail once the returned text exceeds ``budget`` characters.
+
+    Applied after ranking, so the records that survive are the most relevant
+    ones. Always keeps at least one record — an empty context scores 10.4
+    against 63.4, so a single over-long memory still beats none.
+    """
+    if budget <= 0:
+        return items
+    kept: list[Scored] = []
+    used = 0
+    for item in items:
+        length = len(item.record.content)
+        if kept and used + length > budget:
+            break
+        kept.append(item)
+        used += length
+    return kept
+
+
 def trim(
     scored: list[Scored],
     limit: int = DEFAULT_RETURN,
     fact_share: float = FACT_SHARE,
+    char_budget: int = CHAR_BUDGET,
 ) -> list[Scored]:
-    """Cut the pool to a fixed slot budget, split between the two indexes.
+    """Cut the pool to a slot budget, split between the two indexes.
 
     The two record kinds are good at different questions, and letting one
     starve the other costs more than it gains. Facts are distilled and
@@ -217,5 +238,8 @@ def trim(
         facts += _dedup([i for i in ordered if id(i) not in taken], seen)[:spare]
 
     merged = facts + messages
-    # Restore global relevance order so the platform sees a ranked list.
-    return sorted(merged, key=lambda i: -i.score)[:limit]
+    # Restore global relevance order so the platform sees a ranked list, then
+    # cap the total text — record count alone is the wrong unit when record
+    # length varies by an order of magnitude between datasets.
+    ranked = sorted(merged, key=lambda i: -i.score)[:limit]
+    return _apply_char_budget(ranked, char_budget)

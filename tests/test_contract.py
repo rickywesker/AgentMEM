@@ -211,6 +211,42 @@ class TestRetrieval:
         kept = retrieve.trim(scored, limit=5, fact_share=0.0)
         assert [i.record.kind for i in kept] == ["message"]
 
+    def test_char_budget_caps_total_returned_text(self):
+        items = [
+            retrieve.Scored(
+                record=record(str(i), f"record {i} " + f"word{i} " * 120), score=1 - i / 100
+            )
+            for i in range(50)
+        ]
+        kept = retrieve.trim(items, limit=50, fact_share=0.0, char_budget=10_000)
+        assert sum(len(k.record.content) for k in kept) <= 10_000
+        assert len(kept) < 50
+
+    def test_char_budget_keeps_the_most_relevant(self):
+        items = [
+            retrieve.Scored(
+                record=record(str(i), f"record {i} " + f"word{i} " * 120), score=1 - i / 100
+            )
+            for i in range(50)
+        ]
+        kept = retrieve.trim(items, limit=50, fact_share=0.0, char_budget=5_000)
+        assert kept[0].record.id == "0"
+
+    def test_char_budget_never_returns_nothing(self):
+        """An empty context scores 10.4 against 63.4, so one over-long
+        record still beats returning none."""
+        items = [retrieve.Scored(record=record("big", "x " * 5000), score=1.0)]
+        assert len(retrieve.trim(items, limit=10, fact_share=0.0, char_budget=10)) == 1
+
+    def test_char_budget_zero_disables_the_cap(self):
+        items = [
+            retrieve.Scored(
+                record=record(str(i), f"record {i} " + f"word{i} " * 120), score=1 - i / 100
+            )
+            for i in range(30)
+        ]
+        assert len(retrieve.trim(items, limit=30, fact_share=0.0, char_budget=0)) == 30
+
     def test_output_stays_in_relevance_order(self):
         scored = [
             retrieve.Scored(record=record("m0", "message zero", "message"), score=0.9),
