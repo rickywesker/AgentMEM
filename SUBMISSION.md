@@ -16,7 +16,7 @@
 | Search API 地址 | `https://<railway-domain>/search` |
 | 认证方式 | `Authorization: Token` |
 | 记忆系统 Key | `.env` 里的 `AGENTMEM_API_KEY` |
-| 公开 GitHub 仓库地址 | 推送后的仓库 URL |
+| 公开 GitHub 仓库地址 | `https://github.com/rickywesker/AgentMEM` |
 
 `认证方式` 选 `Authorization: Token` 与代码一致:`api.py` 的 `authorize()` 会把
 `Authorization: <scheme> <value>` 按空白切分取后半段,所以 `Token abc123` 和
@@ -80,34 +80,33 @@
 - [ ] `.env` 未进仓库
 - [ ] 勾选「30 天内持续公网可访问且保持稳定」
 
-## 一个需要向组委会确认的问题
+## 关于 gpt-4o-mini 规则
 
 表单写明:**「非工业榜申请中,Add / Search 过程中使用的模型必须为 gpt-4o-mini。」**
 
-这条规则对生成式模型是清楚的,我们也已符合——默认配置在 Add/Search 全程不调用任何
-生成式模型。但**向量检索用的 embedding 模型无法是 gpt-4o-mini**(它不提供 embedding
-接口),规则是否覆盖 embedding 并不明确。
+生成式模型这块已符合:默认配置在 Add/Search 全程不调用任何生成式模型
+(`EXTRACT_API_BASE` 留空)。
 
-这不是一个可以回避的细节。三套配置都已实测(LoCoMo n=500):
+**已决定:使用向量检索(`text-embedding-3-small`)。** 规则针对的是生成式模型——
+embedding 模型无法是 gpt-4o-mini,后者不提供 embedding 接口——按此理解提交。
+上面的「提交说明与运行指南」里已如实披露用了 embedding,由组委会审核判定。
 
-| 配置 | 得分 | embedding | Add/Search 内的生成式模型 |
-|---|---|---|---|
-| embedding + 不抽取 | **62.2–63.4** | 用 | 无 |
-| BM25 + gpt-4o-mini 抽取 | 57.8 | 不用 | gpt-4o-mini |
-| 纯 BM25 | 55.6 | 不用 | 无 |
+如果组委会认定 embedding 也在限制内,退回配置是**改环境变量,不改代码**:
 
-两种读法对应两套配置,差 5 分左右,都远超 ±1.4 的运行间方差:
+```
+EMBED_API_BASE=            # 留空,关闭向量检索
+EXTRACT_API_BASE=<endpoint>
+EXTRACT_MODEL=gpt-4o-mini  # 规则指定的模型
+AGENTMEM_FACT_SHARE=0.5
+```
 
-- **embedding 不受限** → 用第一行,即当前默认配置,无需改动。
-- **embedding 也必须是 gpt-4o-mini(即等价于禁用向量检索)** → 用第二行:
-  `EMBED_API_BASE` 留空,`EXTRACT_API_BASE` 指向 gpt-4o-mini,
-  `AGENTMEM_FACT_SHARE=0.5`。注意此时**不能**退回纯 BM25——没有 embedding 时,
-  gpt-4o-mini 抽取值 +2.2 分,两者是部分冗余的替代关系。
+三套配置的实测分数(LoCoMo n=500),用于评估退回代价:
 
-切换只改环境变量,不改代码。
+| 配置 | 得分 |
+|---|---|
+| embedding + 不抽取(**当前**) | **62.2–63.4** |
+| BM25 + gpt-4o-mini 抽取(退回配置) | 57.8 |
+| 纯 BM25 | 55.6 |
 
-建议在邮件里直接问:
-
-> 学术榜规则中「Add/Search 过程中使用的模型必须为 gpt-4o-mini」,是否包含用于向量
-> 检索的 embedding 模型(如 text-embedding-3-small)?若包含,是否有指定的
-> embedding 模型,还是要求完全不使用向量检索?
+退回时**不要**用纯 BM25——没有 embedding 时 gpt-4o-mini 抽取值 +2.2 分,
+两者是部分冗余的替代关系。
