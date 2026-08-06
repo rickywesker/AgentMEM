@@ -103,7 +103,9 @@ def load(
                 role = str(message.get("role", "user"))
                 messages.append(
                     {
-                        "role": "user" if role == "system" else role,
+                        # Kept as-is: the service reads `system` as standing
+                        # context rather than another conversational turn.
+                        "role": role,
                         "content": text,
                         "timestamp": _EPOCH_MS + position * _DAY_MS,
                     }

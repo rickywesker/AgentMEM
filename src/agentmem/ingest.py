@@ -68,6 +68,13 @@ def render_fact(content: str, when: datetime | None) -> str:
 def message_rows(request: AddRequest) -> list[tuple]:
     """One row per source turn, in arrival order.
 
+    Standing context — a ``system`` turn carrying a persona block or durable
+    preferences — was tried as a separate kind, pinned into every result so it
+    could not be missed on questions whose wording it does not share. It took
+    PersonaMem's "apply known preferences to a new scenario" category from 30
+    to 50 and still lost overall, three ways: 59.3 without it, 58.6 pinned
+    inside the budget, 57.1 pinned additively. It is one kind of record again.
+
     One turn, not one exchange. Grouping consecutive turns into rounds is the
     granularity LongMemEval's own ablation recommends, and it was tried: it
     cost 3.3 points on LongMemEval and gained nothing on LoCoMo. The reason
