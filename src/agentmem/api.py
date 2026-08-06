@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from . import extract, ingest, retrieve
-from .config import API_KEY, LLM_MAX_CONCURRENCY, MODELS
+from .config import API_KEY, CHAR_BUDGET, CHOICE_CHAR_BUDGET, LLM_MAX_CONCURRENCY, MODELS
 from .llm import LLMError, embed
 from .schemas import AddRequest, AddResponse, Memory, SearchRequest, SearchResponse
 from .store import Store
@@ -144,7 +144,10 @@ async def search(request: SearchRequest) -> SearchResponse:
     # to the turn it came from.
     pool = retrieve.resolve_sources(pool, {record.id: record for record in records})
     limit = min(retrieve.DEFAULT_RETURN, request.top_k)
-    selected = retrieve.trim(pool, limit=limit)
+    # A choice question announces itself by carrying options, and it wants a
+    # much tighter context than an open-ended one — see CHOICE_CHAR_BUDGET.
+    budget = CHOICE_CHAR_BUDGET if request.options else CHAR_BUDGET
+    selected = retrieve.trim(pool, limit=limit, char_budget=budget)
 
     return SearchResponse(
         data=[

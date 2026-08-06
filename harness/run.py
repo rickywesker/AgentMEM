@@ -29,10 +29,10 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agentmem.config import Gear  # noqa: E402
-from agentmem.llm import chat  # noqa: E402
+from agentmem.llm import chat, chat_messages  # noqa: E402
 
 from . import contracts  # noqa: E402
-from .adapters import locomo, longmemeval  # noqa: E402
+from .adapters import locomo, longmemeval, personamem  # noqa: E402
 
 CACHE = Path(__file__).resolve().parent / ".cache"
 
@@ -110,7 +110,11 @@ class HttpSystem:
             assert body.get(field) == payload[field], f"{field} must echo exactly"
 
     async def search(self, question: locomo.Question, top_k: int = 100) -> list[dict]:
-        payload = {"query": question.question, "user_id": question.user_id, "top_k": top_k}
+        payload: dict = {"query": question.question, "user_id": question.user_id, "top_k": top_k}
+        # The contract sends `options` on choice questions. Omitting it here
+        # under-models the request the platform actually makes.
+        if question.options:
+            payload["options"] = question.options
         response = await self.client.post(f"{self.base_url}/search", json=payload)
         response.raise_for_status()
         body = response.json()
@@ -157,6 +161,47 @@ def build_answer_item(
         "speaker_2_name": question.speaker_2_name,
         "retrieved_context": block,
     }
+
+
+async def score_personamem(
+    client: httpx.AsyncClient,
+    system: HttpSystem,
+    question: locomo.Question,
+    top_k: int,
+    semaphore: asyncio.Semaphore,
+    style: str = "turns",
+) -> Result:
+    """PersonaMem scores by exact option match, with no judge in the loop.
+
+    Memories go in as chat history rather than a block inside one turn, and
+    the answer is graded by string equality on the option letter — so a
+    response that hedges across two options is wrong even when one is right.
+    """
+    async with semaphore:
+        memories = await system.search(question, top_k=top_k)
+        contents = [item["content"] for item in memories]
+        options = question.evidence[0] if question.evidence else ""
+        messages = contracts.personamem_messages(
+            contents, question.question, options, style
+        )
+
+        key = _hash(json.dumps(messages, ensure_ascii=False), salt=_answer_gear().model)
+        generated = _cache_get("answer", key)
+        if generated is None:
+            generated = await chat_messages(client, _answer_gear(), messages)
+            _cache_put("answer", key, generated)
+
+        correct = contracts.personamem_is_correct(generated, question.gold)
+        return Result(
+            id=question.id,
+            category=question.category,
+            question=question.question,
+            gold=question.gold,
+            generated=generated,
+            label="CORRECT" if correct else "WRONG",
+            n_memories=len(memories),
+            context_chars=sum(len(text) for text in contents),
+        )
 
 
 async def score_one(
@@ -247,7 +292,9 @@ def report(results: list[Result], labels: dict[int, str] | None = None) -> dict:
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default="locomo", choices=["locomo", "longmemeval"])
+    parser.add_argument(
+        "--dataset", default="locomo", choices=["locomo", "longmemeval", "personamem"]
+    )
     parser.add_argument("--haystacks", type=int, default=0,
                         help="longmemeval only: cap questions/haystacks ingested (0 = all)")
     parser.add_argument("--data-path", default="harness/datasets/locomo/data/locomo10.json")
@@ -260,14 +307,19 @@ async def main() -> None:
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument(
         "--context-style",
-        choices=["stamped", "bare"],
+        choices=["stamped", "bare", "turns", "block"],
         default="stamped",
-        help="how retrieved memories are rendered into the answer prompt; "
-        "'bare' drops created_at, the pessimistic case for the platform's "
-        "unpublished textual formatter",
+        help="how retrieved memories are rendered into the answer prompt. "
+        "locomo/longmemeval: 'stamped' or 'bare' (bare drops created_at, the "
+        "pessimistic case for the platform's unpublished formatter). "
+        "personamem: 'turns' (one chat message each) or 'block' (all in one)",
     )
     parser.add_argument("--tag", default="run", help="label for the saved report")
     args = parser.parse_args()
+    # PersonaMem takes memories as chat messages, so its rendering choices are
+    # different ones: turns (one message each) vs block (all in one).
+    if args.dataset == "personamem" and args.context_style == "stamped":
+        args.context_style = "turns"
 
     if args.dataset == "locomo":
         chunks, questions = locomo.load(args.data_path)
@@ -284,9 +336,19 @@ async def main() -> None:
             path = "harness/datasets/longmemeval/longmemeval_s.json"
         chunks, questions = longmemeval.load(path, limit=args.haystacks)
         labels = longmemeval.category_names()
+    elif args.dataset == "personamem":
+        root = Path("harness/datasets/personamem")
+        chunks, questions = personamem.load(
+            root / "questions_32k.csv", root / "shared_contexts_32k.jsonl", limit=args.limit
+        )
+        labels = personamem.category_names()
     else:
         raise SystemExit(f"adapter for {args.dataset!r} not wired yet")
-    sampled = stratified_sample(questions, args.limit, args.seed)
+    sampled = (
+        questions
+        if args.dataset == "personamem"
+        else stratified_sample(questions, args.limit, args.seed)
+    )
     print(
         f"loaded {len(chunks)} chunks, {len(questions)} questions "
         f"({Counter(q.category for q in questions)}); evaluating {len(sampled)}"
@@ -304,11 +366,12 @@ async def main() -> None:
             await asyncio.gather(*(add_one(c) for c in chunks))
             print(f"ingested {len(chunks)} chunks")
 
+        scorer = score_personamem if args.dataset == "personamem" else score_one
         semaphore = asyncio.Semaphore(args.concurrency)
         async with httpx.AsyncClient(timeout=180.0) as client:
             results = await asyncio.gather(
                 *(
-                    score_one(client, system, q, args.top_k, semaphore, args.context_style)
+                    scorer(client, system, q, args.top_k, semaphore, args.context_style)
                     for q in sampled
                 )
             )

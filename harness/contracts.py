@@ -133,6 +133,72 @@ Return only the answer, exactly in the format requested by the question:
 """.strip()
 
 
+# --------------------------------------------------------------------------
+# PersonaMem v1. A different contract from the two above: memories arrive as
+# chat messages rather than inside a <memories> block, and scoring is exact
+# string matching rather than an LLM judge.
+# --------------------------------------------------------------------------
+PERSONAMEM_INSTRUCTION = (
+    "Find the most appropriate model response and give your final answer "
+    "(a), (b), (c), or (d) after the special token <final_answer>."
+)
+
+
+def personamem_messages(
+    memories: list[str], question: str, all_options: str, style: str = "turns"
+) -> list[dict]:
+    """Assemble the official chat sequence with our memories as the history.
+
+    The platform's ``context_messages`` is a list of chat messages, but how it
+    turns our flat Search result into that list is not published. Two readings
+    are plausible and they are not equivalent:
+
+    ``turns``  each memory becomes its own user message. Faithful to the
+               original PersonaMem context shape, but produces a run of dozens
+               of consecutive user turns with no assistant replies.
+    ``block``  all memories in one user message. A stranger shape for a chat
+               history, but a much more ordinary prompt.
+
+    Worth scoring both: the format failures we see under ``turns`` — the model
+    answering in prose instead of naming an option letter — are exactly what a
+    malformed conversation would cause, and the scorer gives no credit for a
+    right answer stated the wrong way.
+    """
+    if style == "block":
+        history = "\n".join(f"- {text}" for text in memories)
+        messages = [{"role": "user", "content": history}] if history else []
+    else:
+        messages = [{"role": "user", "content": text} for text in memories]
+    messages.append(
+        {"role": "user", "content": f"{question}\n\n{PERSONAMEM_INSTRUCTION}\n\n{all_options}"}
+    )
+    return messages
+
+
+def _option_set(answer: object) -> set[str]:
+    text = str(answer).strip().lower()
+    in_parens = re.findall(r"\(([a-d])\)", text)
+    if in_parens:
+        return set(in_parens)
+    return set(re.findall(r"\b([a-d])\b", text))
+
+
+def personamem_is_correct(predicted: str, correct_answer: str) -> bool:
+    """Verbatim port of the platform's ``official_extract_answer``.
+
+    Note the equality rather than membership: naming two option letters is
+    wrong even when one of them is right.
+    """
+    full = str(predicted)
+    trimmed = full.strip()
+    gold = str(correct_answer).lower().strip("() ")
+    if "<final_answer>" in trimmed:
+        trimmed = trimmed.split("<final_answer>")[-1].strip()
+    if trimmed.endswith("</final_answer>"):
+        trimmed = trimmed[: -len("</final_answer>")].strip()
+    return _option_set(trimmed) == {gold} or _option_set(full) == {gold}
+
+
 _SLOTS = ("speaker_1_name", "speaker_1_memories", "speaker_2_name", "speaker_2_memories", "question")
 
 

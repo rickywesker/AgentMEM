@@ -46,6 +46,8 @@ class Question:
     speaker_1_name: str
     speaker_2_name: str
     evidence: list[str] = field(default_factory=list)
+    # Present only on choice questions; the platform sends these to Search.
+    options: list[str] = field(default_factory=list)
 
 
 def _session_epoch_ms(stamp: str) -> int | None:

@@ -378,6 +378,41 @@ class TestRetrieval:
         assert scores == sorted(scores, reverse=True)
 
 
+class TestChoiceQuestions:
+    """A choice question is identified by `options` and wants a much tighter
+    context than an open-ended one."""
+
+    def test_choice_budget_is_far_below_the_open_ended_one(self):
+        assert 0 < config.CHOICE_CHAR_BUDGET < config.CHAR_BUDGET
+
+    def test_choice_budget_admits_only_a_handful_of_records(self):
+        items = [
+            retrieve.Scored(
+                record=record(str(i), f"memory {i} " + f"word{i} " * 150), score=1 - i / 100
+            )
+            for i in range(60)
+        ]
+        kept = retrieve.trim(
+            items, limit=100, fact_share=0.0, char_budget=config.CHOICE_CHAR_BUDGET
+        )
+        # PersonaMem peaked around eight records; the point is that it is
+        # single digits, not that it is exactly eight.
+        assert 1 <= len(kept) <= 15
+
+    def test_open_ended_budget_admits_far_more(self):
+        items = [
+            retrieve.Scored(
+                record=record(str(i), f"memory {i} " + f"word{i} " * 150), score=1 - i / 100
+            )
+            for i in range(60)
+        ]
+        wide = retrieve.trim(items, limit=100, fact_share=0.0, char_budget=config.CHAR_BUDGET)
+        tight = retrieve.trim(
+            items, limit=100, fact_share=0.0, char_budget=config.CHOICE_CHAR_BUDGET
+        )
+        assert len(wide) > len(tight) * 2
+
+
 class TestShippedDefaults:
     """The image ships without a .env, so module defaults are what runs in
     production when an operator sets only credentials. Drift here is invisible

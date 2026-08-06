@@ -30,12 +30,37 @@ async def chat(
     attempts: int = 6,
 ) -> str:
     """Single-turn completion. Returns the message content."""
+    return await chat_messages(
+        client,
+        gear,
+        [{"role": "user", "content": prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        attempts=attempts,
+    )
+
+
+async def chat_messages(
+    client: httpx.AsyncClient,
+    gear: Gear,
+    messages: list[dict],
+    *,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
+    attempts: int = 6,
+) -> str:
+    """Multi-turn completion.
+
+    PersonaMem's contract puts retrieved memories in as chat history rather
+    than inside a single prompt, so the harness needs to send a real message
+    list rather than one concatenated string.
+    """
     if not gear.base_url or not gear.model:
         raise LLMError("gear is not configured (missing base_url or model)")
 
     payload: dict = {
         "model": gear.model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "temperature": temperature,
     }
     if max_tokens is not None:

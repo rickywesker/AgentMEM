@@ -72,6 +72,18 @@ POOL_N = int(os.environ.get("AGENTMEM_POOL_N", "140"))
 # the answer model a 100k-character prompt. 0 disables it.
 CHAR_BUDGET = int(os.environ.get("AGENTMEM_CHAR_BUDGET", "50000"))
 
+# Tighter budget for multiple-choice questions, which the contract identifies
+# by sending `options`.
+#
+# The two question shapes want opposite things. Open-ended answering rewards
+# coverage — LoCoMo climbs all the way to a hundred records. Choice answering
+# needs the model to obey an output format ("give your final answer (a), (b),
+# (c), or (d)"), and a long context is what makes it stop obeying: the
+# PersonaMem failures are the model writing prose instead of naming a letter,
+# which the exact-match scorer gives nothing for. Measured on PersonaMem:
+# 50.7 at 50k characters, 55.7 at 8k.
+CHOICE_CHAR_BUDGET = int(os.environ.get("AGENTMEM_CHOICE_CHAR_BUDGET", "8000"))
+
 # Share of the returned slots reserved for extracted facts; the rest go to raw
 # dated turns. Swept, not guessed — see runs/share-*.json.
 FACT_SHARE = float(os.environ.get("AGENTMEM_FACT_SHARE", "0.5"))
