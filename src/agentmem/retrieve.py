@@ -104,6 +104,85 @@ def reciprocal_rank_fusion(rankings: list[list[int]], size: int, k: int = RRF_K)
     return [index for index, _ in sorted(fused.items(), key=lambda kv: -kv[1])][:size]
 
 
+_MONTHS = {
+    name.lower(): number
+    for number, name in enumerate(
+        "January February March April May June July August September "
+        "October November December".split(),
+        start=1,
+    )
+}
+_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+_MONTH_WORD = re.compile(r"\b(" + "|".join(_MONTHS) + r")\b", re.IGNORECASE)
+# "most recent" and "first" are temporal constraints too, and unlike "last
+# month" they need no anchor date to resolve.
+_LATEST = re.compile(
+    r"\b(most recent|latest|last time|mostly recently|nowadays|these days)\b", re.I
+)
+_EARLIEST = re.compile(r"\b(first time|for the first time|originally|initially|at first)\b", re.I)
+
+
+@dataclass(slots=True)
+class Temporal:
+    year: int | None = None
+    month: int | None = None
+    prefer: str | None = None  # "latest" | "earliest"
+
+
+def temporal_constraint(query: str) -> Temporal | None:
+    """Pull a resolvable time constraint out of the question, or nothing.
+
+    Search receives no question date — only the query, the options and the
+    user — so relative expressions like "last month" have no anchor and are
+    deliberately not guessed at. What is resolvable without one: an explicit
+    year, a named month, and orderings like "the first time" or "most
+    recently".
+
+    Returning None when nothing is found matters. A query with no temporal
+    intent must not pick up a recency bias it never asked for.
+    """
+    year_match = _YEAR.search(query)
+    month_match = _MONTH_WORD.search(query)
+    if _LATEST.search(query):
+        prefer = "latest"
+    elif _EARLIEST.search(query):
+        prefer = "earliest"
+    else:
+        prefer = None
+    if not (year_match or month_match or prefer):
+        return None
+    return Temporal(
+        year=int(year_match.group()) if year_match else None,
+        month=_MONTHS[month_match.group(1).lower()] if month_match else None,
+        prefer=prefer,
+    )
+
+
+def temporal_ranking(records: list[Record], want: Temporal, limit: int) -> list[int]:
+    """Rank by agreement with the question's time constraint.
+
+    This is a third ranking fused alongside lexical and dense, never a hard
+    filter. A filter would zero out recall whenever the parse is wrong, and
+    being wrong is cheap here only because RRF treats this as one vote.
+    """
+    matches: list[tuple] = []
+    for index, record in enumerate(records):
+        when = record.created_at
+        if when is None:
+            continue
+        if want.year is not None and when.year != want.year:
+            continue
+        if want.month is not None and when.month != want.month:
+            continue
+        matches.append((when, index))
+    if not matches:
+        return []
+    # Within the window, order by whichever end the question asked for;
+    # default to recent, matching answer-prompt rule 8.
+    matches.sort(key=lambda pair: pair[0], reverse=want.prefer != "earliest")
+    return [index for _, index in matches[:limit]]
+
+
 def _order(scores: np.ndarray, limit: int) -> list[int]:
     if scores.size == 0:
         return []
@@ -149,6 +228,15 @@ def candidates(
                 dense[record_index] = cosine[position]
             order = np.argsort(-dense)[:pool]
             rankings.append([int(i) for i in order if np.isfinite(dense[i])])
+
+    # Third signal, only when the question actually carries a time constraint.
+    # created_at is a real timestamp; leaving it out of ranking meant dates
+    # were only ever matched as ordinary words by BM25.
+    want = temporal_constraint(query)
+    if want is not None:
+        dated = temporal_ranking(records, want, pool)
+        if dated:
+            rankings.append(dated)
 
     fused = reciprocal_rank_fusion(rankings, pool)
 

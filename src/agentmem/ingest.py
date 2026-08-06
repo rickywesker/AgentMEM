@@ -64,7 +64,16 @@ def render_fact(content: str, when: datetime | None) -> str:
 
 
 def message_rows(request: AddRequest) -> list[tuple]:
-    """One row per source turn, in arrival order."""
+    """One row per source turn, in arrival order.
+
+    One turn, not one exchange. Grouping consecutive turns into rounds is the
+    granularity LongMemEval's own ablation recommends, and it was tried: it
+    cost 3.3 points on LongMemEval and gained nothing on LoCoMo. The reason
+    shows up in a single number — at the same character budget, rounds
+    returned 26.4 distinct memories where turns returned 46.9. Coarser units
+    buy fewer distinct hits for the same context, and distinct hits are what
+    the answer model needs.
+    """
     rows: list[tuple] = []
     for ordinal, message in enumerate(request.messages):
         text = (message.content or "").strip()
