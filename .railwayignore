@@ -1,0 +1,22 @@
+# `railway up` uploads the working directory, which is not the same set of
+# files git tracks. Without this it would ship ~290MB of benchmark corpora and
+# the local virtualenv on every deploy.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+harness/datasets/
+harness/.cache/
+runs/
+data/
+
+.env
+.env.*
+!.env.example
+
+.git/
+.pytest_cache/
+.ruff_cache/
+.impeccable/
+*.egg-info/

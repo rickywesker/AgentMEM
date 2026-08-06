@@ -12,10 +12,10 @@
 | 工作邮箱 | rick 的邮箱 |
 | 系统名称 | `AgentMEM` |
 | 版本名称 | 提交时的 commit 短哈希,例如 `v1.0-8aaf06d` |
-| Add API 地址 | `https://<railway-domain>/add` |
-| Search API 地址 | `https://<railway-domain>/search` |
+| Add API 地址 | `https://agentmem-production-2ba2.up.railway.app/add` |
+| Search API 地址 | `https://agentmem-production-2ba2.up.railway.app/search` |
 | 认证方式 | `Authorization: Token` |
-| 记忆系统 Key | `.env` 里的 `AGENTMEM_API_KEY` |
+| 记忆系统 Key | Railway 服务变量 `AGENTMEM_API_KEY`(值见下方) |
 | 公开 GitHub 仓库地址 | `https://github.com/rickywesker/AgentMEM` |
 
 `认证方式` 选 `Authorization: Token` 与代码一致:`api.py` 的 `authorize()` 会把
@@ -72,13 +72,51 @@
 > 复现所用的离线 harness 在 `harness/`,其 answer/judge prompt 逐字取自贵方公开的
 > 评测代码 `AML-memory/agent-memory-leaderboard`,已在 README 中署名。
 
+## 部署现状
+
+已部署,状态如下。`记忆系统 Key` 的值不写进仓库,用下面的命令取:
+
+```bash
+railway variables --service agentmem --kv | grep AGENTMEM_API_KEY
+```
+
+| 项 | 值 |
+|---|---|
+| Railway 项目 | `AgentMEM`(`95c46a4c-b997-4ad1-9700-6e27f7edd11f`) |
+| 服务 | `agentmem` + `Postgres` 插件 |
+| 区域 | Southeast Asia ×1(US West 已缩到 0) |
+| 公网地址 | `https://agentmem-production-2ba2.up.railway.app` |
+| 健康检查 | `GET /health` → 200 |
+
+单副本是刻意的:限流信号量是进程内的,多副本会把有意压住的上游并发翻倍;而且
+多区域副本会让一半流量走上跨太平洋的慢路径。
+
+**公网压测结果**(`scripts/stress.py`,64 并发 Add / 32 并发 Search):
+
+```
+adds        264 (含 24 次重放重试)  20.5s
+latency     p50 3.99s   p99 8.38s   (平台超时 1200s)
+throughput  12.9 adds/s
+PASS — 契约通过、无跨用户泄漏、无 5xx
+```
+
+按 12.9 adds/s 估算,文本赛道约 47,000 个 chunk 灌完约 1 小时,窗口是 72 小时。
+
+鉴权已验证:无 key → 401,错 key → 401,正确 key → 200。
+
+**已知无害残留**:压测写入的 `stress:conv-*` 共 264 行仍在库里。检索按 `user_id`
+限定范围,BM25 也是按用户从 `load_user` 现建的,所以这些行既不会被任何真实查询命中,
+也不影响打分。要清理需给 Railway 注册 SSH key 后执行
+`DELETE FROM memories WHERE user_id LIKE 'stress:%'`。
+
 ## 提交前确认
 
-- [ ] 仓库已推送且为 public
-- [ ] Railway(或其他)部署完成,`https://<domain>/health` 从外网返回 200
-- [ ] `scripts/stress.py` 对**公网地址**跑出 PASS
-- [ ] `.env` 未进仓库
-- [ ] 勾选「30 天内持续公网可访问且保持稳定」
+- [x] 仓库已推送且为 public
+- [x] 部署完成,`/health` 从外网返回 200
+- [x] `scripts/stress.py` 对**公网地址**跑出 PASS
+- [x] `.env` 未进仓库
+- [ ] 勾选「30 天内持续公网可访问且保持稳定」——注意 Railway 用量计费,
+      30 天内不要删项目或让服务休眠
 
 ## 关于 gpt-4o-mini 规则
 
