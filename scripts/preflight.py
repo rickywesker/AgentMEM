@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
 import httpx
@@ -51,7 +52,16 @@ async def main() -> int:
     def check(status: str, name: str, detail: str = "") -> None:
         results.append((status, name, detail))
 
-    async with httpx.AsyncClient(timeout=180.0) as client:
+    # trust_env=False so a shell proxy cannot answer for the evaluator. Every
+    # check below passed against Railway while the evaluator, on a mainland
+    # network, could not open a TCP connection at all — the requests were going
+    # out through HTTPS_PROXY. A green preflight has to mean the path the
+    # platform uses works, not that some path works.
+    proxies = [name for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY") if os.environ.get(name)]
+    if proxies:
+        check(WARN, "proxy env ignored", f"{', '.join(proxies)} set; testing the direct path")
+
+    async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
         # --- health -------------------------------------------------------
         try:
             response = await client.get(f"{base}/health")

@@ -5,6 +5,10 @@ WORKDIR /app
 # Dependencies first so source edits do not invalidate the layer.
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
+# Defaults to PyPI, so the build is unchanged wherever PyPI is fast. The host
+# now sits in mainland China, where PyPI resolves at ~20 kB/s and this layer
+# takes half an hour; a domestic mirror pulls the same wheels at ~8 MB/s.
+ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir -e .
 
 ENV PYTHONUNBUFFERED=1 \

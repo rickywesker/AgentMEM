@@ -74,7 +74,9 @@ async def main() -> int:
     # must not double-write.
     retries = payloads[: max(1, len(payloads) // 10)]
 
-    async with httpx.AsyncClient(timeout=1200.0, headers=headers) as client:
+    # trust_env=False for the same reason as preflight: a shell proxy would
+    # measure a route the evaluation platform never takes.
+    async with httpx.AsyncClient(timeout=1200.0, headers=headers, trust_env=False) as client:
         add_slots = asyncio.Semaphore(args.add_workers)
 
         async def do_add(payload: dict) -> None:

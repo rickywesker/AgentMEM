@@ -1,6 +1,10 @@
 services:
   db:
     image: postgres:17-alpine
+    # The app runs with --restart unless-stopped; without the same policy here
+    # a host reboot brings the service back up against a database that is not
+    # there. The evaluation window is 72 hours and unattended.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: agentmem
       POSTGRES_PASSWORD: agentmem
