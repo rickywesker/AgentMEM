@@ -71,6 +71,20 @@ async def main() -> int:
             check(FAIL, "GET /health reachable", str(error)[:90])
             return report(results)
 
+        # Nothing else here can see this. Every check below passes identically
+        # with dense retrieval off, and so does the platform's smoke run — the
+        # cost only appears in the final score, which is measured once.
+        # Lexical-only is a legitimate configuration, so this warns rather than
+        # fails; what it must not do is stay quiet.
+        health = response.json() if ok else {}
+        mode = health.get("retrieval")
+        if mode == "hybrid":
+            check(PASS, "dense retrieval is on", f"embedding with {health.get('embed_model')}")
+        elif mode == "lexical-only":
+            check(WARN, "dense retrieval is OFF", "EMBED_API_BASE unset — BM25 alone is ~7 lower")
+        else:
+            check(WARN, "retrieval mode not reported", "deployed build predates this field")
+
         # --- auth ---------------------------------------------------------
         if args.key:
             for label, headers in [

@@ -7,6 +7,7 @@ the competition rules make non-negotiable.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections import Counter
 from datetime import UTC, datetime
@@ -432,6 +433,27 @@ class TestShippedDefaults:
     def test_extraction_is_off_by_default(self):
         # It measured level with not extracting, at 3-6x the ingest time.
         assert not config.MODELS.extract.base_url or os.environ.get("EXTRACT_API_BASE")
+
+    def test_health_reports_which_retrieval_is_running(self):
+        """An unset embedding gear disables dense retrieval without an error,
+        and every other check over HTTP passes identically either way. The
+        seven points it costs are measured once, so the mode has to be visible
+        from outside the host."""
+        from agentmem import api
+
+        embed = config.MODELS.embed
+        try:
+            config.MODELS.embed = config.Gear(base_url="", api_key="", model="")
+            assert asyncio.run(api.health())["retrieval"] == "lexical-only"
+
+            config.MODELS.embed = config.Gear(
+                base_url="https://api.voyageai.com/v1", api_key="k", model="voyage-4-large"
+            )
+            reported = asyncio.run(api.health())
+            assert reported["retrieval"] == "hybrid"
+            assert reported["embed_model"] == "voyage-4-large"
+        finally:
+            config.MODELS.embed = embed
 
 
 class TestIsolation:

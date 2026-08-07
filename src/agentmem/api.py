@@ -46,6 +46,13 @@ async def lifespan(app: FastAPI):
     )
     state["llm_slots"] = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
     log.info("agentmem ready (llm concurrency %d)", LLM_MAX_CONCURRENCY)
+    # Say which retrieval is actually running. An unset gear disables its stage
+    # silently — that is deliberate, but it makes a misconfiguration
+    # indistinguishable from a choice, and the difference is seven points.
+    if MODELS.embed.base_url:
+        log.info("retrieval: hybrid, embedding with %s", MODELS.embed.model)
+    else:
+        log.warning("retrieval: LEXICAL ONLY — EMBED_API_BASE is unset")
     try:
         yield
     finally:
@@ -77,7 +84,20 @@ async def authorize(
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    """Liveness, plus which retrieval stages are actually configured.
+
+    Reported because nothing else over HTTP can see it. A service with no
+    embeddings answers every request correctly and passes every contract check
+    — the only other witness is a count of non-null embeddings in the database,
+    which needs a shell on the host. That gap already hid a live deployment
+    that was silently lexical-only.
+    """
+    return {
+        "status": "ok",
+        "retrieval": "hybrid" if MODELS.embed.base_url else "lexical-only",
+        "embed_model": MODELS.embed.model or None,
+        "extract_model": MODELS.extract.model or None,
+    }
 
 
 async def embed_texts(texts: list[str]) -> list[list[float]] | None:
