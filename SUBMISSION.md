@@ -15,7 +15,7 @@
 | Add API 地址 | `http://47.99.166.113:3000/add` |
 | Search API 地址 | `http://47.99.166.113:3000/search` |
 | 认证方式 | `Authorization: Token` |
-| 记忆系统 Key | Railway 服务变量 `AGENTMEM_API_KEY`(值见下方) |
+| 记忆系统 Key | ECS 上的 `AGENTMEM_API_KEY`;留空则不鉴权 |
 | 公开 GitHub 仓库地址 | `https://github.com/rickywesker/AgentMEM` |
 
 `认证方式` 选 `Authorization: Token` 与代码一致:`api.py` 的 `authorize()` 会把
