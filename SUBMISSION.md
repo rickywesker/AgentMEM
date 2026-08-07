@@ -131,8 +131,12 @@ PASS — 契约通过、无跨用户泄漏、无 5xx
 - [ ] **把表单里的 Add / Search 地址改成新的 ECS 地址**——旧的 Railway 地址还留在
       表单里的话,重跑冒烟必然再挂一次
 - [x] embedding 已切到 Voyage 并验证向量确实落库(见下一节)
-- [ ] 用 `harness/` 重测 `voyage-4-large` 的分数——旧的 62.2–63.4 是
-      `text-embedding-3-small` 的数,不能直接引用
+- [x] 用 `harness/` 重测 `voyage-4-large` 的分数 → **64.00**(LoCoMo n=500),
+      对照 `text-embedding-3-small` 63.40、纯 BM25 55.6。换供应商无代价。
+      这一轮是直接打**线上 ECS**(`--system http://47.99.166.113:3000`),
+      所以验证的是真实部署全链路而不只是 embedding 模型,耗时 1m54s。
+      **需要清理**:该轮往生产库写了 `eval:local:locomo:*` 的行,
+      `ssh root@47.99.166.113 "docker exec -i \$(docker ps -qf name=db) psql -U agentmem -d agentmem -c \"DELETE FROM memories WHERE user_id LIKE 'eval:local:%'\""`
 - [ ] 确认 Voyage 账户余额够 ~47,000 次 embedding 调用
 - [ ] 勾选「30 天内持续公网可访问且保持稳定」——ECS 到 2027-05-19 到期,
       30 天内不要停机;`--restart unless-stopped` 已设置

@@ -88,7 +88,12 @@ class HttpSystem:
     def __init__(self, base_url: str, api_key: str = "", timeout: float = 1200.0):
         self.base_url = base_url.rstrip("/")
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        self.client = httpx.AsyncClient(timeout=timeout, headers=headers)
+        # trust_env=False for the same reason preflight and stress do it: a
+        # shell proxy would send this over a route the evaluator never takes.
+        # Here it only costs latency rather than correctness, but a score
+        # measured through a different path is a score measured on a different
+        # system.
+        self.client = httpx.AsyncClient(timeout=timeout, headers=headers, trust_env=False)
 
     async def add(self, chunk: locomo.Chunk) -> None:
         payload = {
