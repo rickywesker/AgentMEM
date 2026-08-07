@@ -9,7 +9,17 @@ Two things worth knowing before changing anything here.
    A user's corpus is only a few hundred short records, so a hundred of them is
    not noise, it is coverage. What the trim controls is the *mix*, not the size.
 
-2. **Ranking selects and orders; it never writes.** No stage here composes
+2. **Relevance order, not conversation order.** Presenting the chosen records
+   chronologically is free and looks obviously right — the answer prompt asks
+   the model to resolve relative times and prefer recent memories, and a
+   hundred records sorted by score arrive temporally scrambled. It gained 1.4
+   on LoCoMo, where multi-hop rose 7.1 and temporal fell 8.6, and lost 2.0 on
+   LongMemEval, where the equivalent category did not move at all. Keeping the
+   top few by relevance and sorting only the tail bounced non-monotonically
+   across a range wider than the effect. The idea does not survive a second
+   dataset.
+
+3. **Ranking selects and orders; it never writes.** No stage here composes
    text or consults an expected answer. The competition forbids answering
    inside Search or dressing an answer up as a memory record, and that is a
    disqualifying rule rather than a scoring one.

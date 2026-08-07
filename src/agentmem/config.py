@@ -88,6 +88,7 @@ CHOICE_CHAR_BUDGET = int(os.environ.get("AGENTMEM_CHOICE_CHAR_BUDGET", "8000"))
 # dated turns. Swept, not guessed — see runs/share-*.json.
 FACT_SHARE = float(os.environ.get("AGENTMEM_FACT_SHARE", "0.5"))
 
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://agentmem:agentmem@localhost:5432/agentmem"
 )
