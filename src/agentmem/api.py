@@ -26,6 +26,11 @@ from .llm import LLMError, embed
 from .schemas import AddRequest, AddResponse, Memory, SearchRequest, SearchResponse
 from .store import Store
 
+# uvicorn configures its own loggers and leaves the root one bare, so without
+# this every log.info here goes nowhere — including the line that says which
+# retrieval is running. Only log.warning was surviving, via logging.lastResort.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
+
 log = logging.getLogger("agentmem")
 
 store = Store()
