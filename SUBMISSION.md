@@ -114,7 +114,9 @@ PASS — 契约通过、无跨用户泄漏、无 5xx
 按 39.4 adds/s 估算,文本赛道约 47,000 个 chunk 灌完约 20 分钟,窗口是 72 小时。
 
 鉴权已验证:无 key → 401,错 key → 401,正确 key → 200。
-`scripts/preflight.py` 23 项全过(含"已忽略代理"的 warn 行)。
+`scripts/preflight.py` 24 项全过,其中一项是新增的「dense retrieval is on」——
+`GET /health` 现在会回报检索模式(`{"retrieval":"hybrid","embed_model":"voyage-4-large"}`),
+因为 embedding 关掉时其余每一项检查、包括平台的冒烟,结果都完全相同。
 向量覆盖率 4,803/4,803 = 100%,单条 4,096 字节。
 
 **数据库是干净的**:压测与 preflight 写入的行已全部删除,`SELECT count(*)` 为 0。

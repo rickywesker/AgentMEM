@@ -217,11 +217,26 @@ reason — an unreachable host, §1. The same code covers both, so never read
 that stop partway mean a restart, and a log with no requests at all means the
 platform never got through.
 
-Before redeploying, confirm nothing is running:
+Before redeploying, confirm nothing is running. Ask the database who wrote,
+not the log how much:
 
 ```bash
-docker logs --since 10m agentmem 2>&1 | grep -c "POST /add"
+docker compose exec -T db psql -U agentmem -d agentmem </dev/null -tAc \
+  "SELECT user_id, count(*) FROM memories \
+   WHERE user_id NOT LIKE 'eval:preflight:%' AND user_id NOT LIKE 'stress:%' \
+   GROUP BY 1;"
 ```
+
+Any row here was written by the platform: its user_ids look like
+`eval:scriptmem:<run-timestamp>_<id>:<conversation>`, and the timestamp says
+when the run started.
+
+Counting recent Adds in the log does not work, and has already been tried. A
+verification pass leaves hundreds of its own Adds in the same window — 311 in
+twenty minutes, of which 268 were the operator's stress run and 43 were a live
+smoke run. The totals look identical; only the identity of the writer
+separates them. That misread cost a third smoke attempt, on a service that was
+otherwise ready.
 
 Recent Add traffic that is not yours means an evaluation is live. Wait for it.
 Smoke is one attempt per hour and full is one per three months, so a deploy
