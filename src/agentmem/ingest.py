@@ -68,6 +68,16 @@ def render_fact(content: str, when: datetime | None) -> str:
 def message_rows(request: AddRequest) -> list[tuple]:
     """One row per source turn, in arrival order.
 
+    Whole turns, not passages. Splitting long turns at sentence boundaries was
+    tried because LongMemEval's are ShareGPT-length — median 453 characters,
+    30% over 1,500, one of 76,583 — so a single embedding vector and a single
+    BM25 score stand for the whole thing and the one relevant sentence inside
+    is invisible. It did what it was meant to: evidence recall 72.9% to 74.2%,
+    multi-session 55.6% to 60.8%. End-to-end went 58.67 to 57.33, because at a
+    fixed character budget twice as many records come back (47 to 89) and a
+    passage cut from the middle of a long reply does not stand on its own. It
+    also quadrupled the index, and with it the embedding spend and ingest time.
+
     Standing context — a ``system`` turn carrying a persona block or durable
     preferences — was tried as a separate kind, pinned into every result so it
     could not be missed on questions whose wording it does not share. It took
@@ -84,7 +94,8 @@ def message_rows(request: AddRequest) -> list[tuple]:
     the answer model needs.
     """
     rows: list[tuple] = []
-    for ordinal, message in enumerate(request.messages):
+    ordinal = 0
+    for message in request.messages:
         text = (message.content or "").strip()
         if not text:
             continue
@@ -103,6 +114,7 @@ def message_rows(request: AddRequest) -> list[tuple]:
                 None,  # turns have no source; facts point back at them
             )
         )
+        ordinal += 1
     return rows
 
 
